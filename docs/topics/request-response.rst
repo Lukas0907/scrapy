@@ -463,7 +463,7 @@ method for this job. Here's an example spider which uses it::
 Response objects
 ================
 
-.. class:: Response(url, [status=200, headers, body, flags])
+.. class:: Response(url, [status=200, headers, body, flags, request])
 
     A :class:`Response` object represents an HTTP response, which is usually
     downloaded (by the Downloader) and fed to the Spiders for processing.
@@ -484,14 +484,13 @@ Response objects
        :class:`TextResponse`.
     :type body: str
 
-    :param meta: the initial values for the :attr:`Response.meta` attribute. If
-       given, the dict will be shallow copied.
-    :type meta: dict
-
     :param flags: is a list containing the initial values for the
        :attr:`Response.flags` attribute. If given, the list will be shallow
        copied.
     :type flags: list
+
+    :param request: The :class:`Request` object that this request is tied to.
+    :type request: :class:`Request` object
 
     .. attribute:: Response.url
 
