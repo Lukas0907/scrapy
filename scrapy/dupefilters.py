@@ -1,7 +1,8 @@
-import os
 import logging
+import warnings
 
-from scrapy.utils.job import job_dir
+from scrapy.utils.deprecate import ScrapyDeprecationWarning
+from scrapy.utils.job import persister_from_settings, DiskPersister
 from scrapy.utils.request import referer_str, request_fingerprint
 
 
@@ -27,36 +28,48 @@ class BaseDupeFilter:
 class RFPDupeFilter(BaseDupeFilter):
     """Request Fingerprint duplicates filter"""
 
-    def __init__(self, path=None, debug=False):
+    def __init__(self, path=None, debug=False, persister=None):
         self.file = None
         self.fingerprints = set()
         self.logdupes = True
         self.debug = debug
         self.logger = logging.getLogger(__name__)
-        if path:
-            self.file = open(os.path.join(path, 'requests.seen'), 'a+')
-            self.file.seek(0)
-            self.fingerprints.update(x.rstrip() for x in self.file)
+        if path is not None:
+            warnings.warn("Setting the 'path' argument is deprecated. Please create "
+                          "a scrapy.utils.job.DiskPersister object and set the "
+                          "'persister' argument instead.",
+                          ScrapyDeprecationWarning,
+                          stacklevel=2)
+            self.persister = DiskPersister(path)
+        else:
+            self.persister = persister
+        if persister:
+            self.fingerprints.update(
+                self.persister.get('requests.seen', fallback=b'')
+                .decode('ascii')
+                .split('\n')
+            )
 
     @classmethod
     def from_settings(cls, settings):
         debug = settings.getbool('DUPEFILTER_DEBUG')
-        return cls(job_dir(settings), debug)
+        persister = persister_from_settings(settings)
+        return cls(debug=debug, persister=persister)
 
     def request_seen(self, request):
         fp = self.request_fingerprint(request)
         if fp in self.fingerprints:
             return True
         self.fingerprints.add(fp)
-        if self.file:
-            self.file.write(fp + '\n')
+        if self.persister:
+            self.persister.append('requests.seen', (fp + '\n').encode('ascii'))
 
     def request_fingerprint(self, request):
         return request_fingerprint(request)
 
     def close(self, reason):
-        if self.file:
-            self.file.close()
+        if self.persister:
+            self.persister.close('requests.seen')
 
     def log(self, request, spider):
         if self.debug:

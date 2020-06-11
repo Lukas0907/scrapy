@@ -10,7 +10,7 @@ from scrapy.dupefilters import RFPDupeFilter
 from scrapy.http import Request
 from scrapy.core.scheduler import Scheduler
 from scrapy.utils.python import to_bytes
-from scrapy.utils.job import job_dir
+from scrapy.utils.job import DiskPersister
 from scrapy.utils.test import get_crawler
 from tests.spiders import SimpleSpider
 
@@ -20,7 +20,7 @@ class FromCrawlerRFPDupeFilter(RFPDupeFilter):
     @classmethod
     def from_crawler(cls, crawler):
         debug = crawler.settings.getbool('DUPEFILTER_DEBUG')
-        df = cls(job_dir(crawler.settings), debug)
+        df = cls(debug=debug)
         df.method = 'from_crawler'
         return df
 
@@ -30,7 +30,7 @@ class FromSettingsRFPDupeFilter(RFPDupeFilter):
     @classmethod
     def from_settings(cls, settings):
         debug = settings.getbool('DUPEFILTER_DEBUG')
-        df = cls(job_dir(settings), debug)
+        df = cls(debug=debug)
         df.method = 'from_settings'
         return df
 
@@ -84,8 +84,9 @@ class RFPDupeFilterTest(unittest.TestCase):
         r2 = Request('http://scrapytest.org/2')
 
         path = tempfile.mkdtemp()
+        persister = DiskPersister(jobdir=path)
         try:
-            df = RFPDupeFilter(path)
+            df = RFPDupeFilter(persister=persister)
             try:
                 df.open()
                 assert not df.request_seen(r1)
@@ -93,7 +94,7 @@ class RFPDupeFilterTest(unittest.TestCase):
             finally:
                 df.close('finished')
 
-            df2 = RFPDupeFilter(path)
+            df2 = RFPDupeFilter(persister=persister)
             try:
                 df2.open()
                 assert df2.request_seen(r1)
@@ -142,8 +143,9 @@ class RFPDupeFilterTest(unittest.TestCase):
         r1 = Request('http://scrapytest.org/1')
 
         path = tempfile.mkdtemp()
+        persister = DiskPersister(jobdir=path)
         try:
-            df = RFPDupeFilter(path)
+            df = RFPDupeFilter(persister=persister)
             df.open()
             df.request_seen(r1)
             df.close('finished')

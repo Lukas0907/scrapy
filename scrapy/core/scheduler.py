@@ -2,13 +2,12 @@ import os
 import json
 import logging
 import warnings
-from os.path import join, exists
 
 from queuelib import PriorityQueue
 
-from scrapy.utils.misc import load_object, create_instance
-from scrapy.utils.job import job_dir
 from scrapy.utils.deprecate import ScrapyDeprecationWarning
+from scrapy.utils.misc import load_object, create_instance
+from scrapy.utils.job import DiskPersister, persister_from_settings
 
 
 logger = logging.getLogger(__name__)
@@ -40,15 +39,27 @@ class Scheduler:
     Also, it handles dupefilters.
     """
     def __init__(self, dupefilter, jobdir=None, dqclass=None, mqclass=None,
-                 logunser=False, stats=None, pqclass=None, crawler=None):
+                 logunser=False, stats=None, pqclass=None, crawler=None,
+                 persister=None):
         self.df = dupefilter
-        self.dqdir = self._dqdir(jobdir)
+        if jobdir is not None:
+            warnings.warn("Setting the 'jobdir' argument is deprecated. Please create "
+                          "a scrapy.utils.job.DiskPersister object and set the "
+                          "'persister' argument instead.",
+                          ScrapyDeprecationWarning,
+                          stacklevel=2)
+            self.persister = DiskPersister(jobdir)
+        else:
+            self.persister = persister
+
         self.pqclass = pqclass
         self.dqclass = dqclass
         self.mqclass = mqclass
         self.logunser = logunser
         self.stats = stats
         self.crawler = crawler
+        self.persister = persister
+        self._persist_key = os.path.join('requests.queue', 'active.json')
 
     @classmethod
     def from_crawler(cls, crawler):
@@ -67,9 +78,10 @@ class Scheduler:
         dqclass = load_object(settings['SCHEDULER_DISK_QUEUE'])
         mqclass = load_object(settings['SCHEDULER_MEMORY_QUEUE'])
         logunser = settings.getbool('SCHEDULER_DEBUG')
-        return cls(dupefilter, jobdir=job_dir(settings), logunser=logunser,
+        persister = persister_from_settings(crawler.settings)
+        return cls(dupefilter, jobdir=None, logunser=logunser,
                    stats=crawler.stats, pqclass=pqclass, dqclass=dqclass,
-                   mqclass=mqclass, crawler=crawler)
+                   mqclass=mqclass, crawler=crawler, persister=persister)
 
     def has_pending_requests(self):
         return len(self) > 0
@@ -77,13 +89,13 @@ class Scheduler:
     def open(self, spider):
         self.spider = spider
         self.mqs = self._mq()
-        self.dqs = self._dq() if self.dqdir else None
+        self.dqs = self._dq() if self.persister else None
         return self.df.open()
 
     def close(self, reason):
         if self.dqs:
             state = self.dqs.close()
-            self._write_dqs_state(self.dqdir, state)
+            self._write_dqs_state(state)
         return self.df.close(reason)
 
     def enqueue_request(self, request):
@@ -110,6 +122,17 @@ class Scheduler:
         if request:
             self.stats.inc_value('scheduler/dequeued', spider=self.spider)
         return request
+
+    @property
+    def dqdir(self):
+        warnings.warn("Accessing the 'dqdir' property is deprecated. Please use "
+                      "the 'persister' property instead.",
+                      ScrapyDeprecationWarning)
+        if self.persister:
+            dqdir = os.path.join(self.persister.jobdir, 'requests.queue')
+            if not os.path.exists(dqdir):
+                os.makedirs(dqdir)
+            return dqdir
 
     def __len__(self):
         return len(self.dqs) + len(self.mqs) if self.dqs else len(self.mqs)
@@ -150,33 +173,23 @@ class Scheduler:
 
     def _dq(self):
         """ Create a new priority queue instance, with disk storage """
-        state = self._read_dqs_state(self.dqdir)
+        state = self._read_dqs_state()
         q = create_instance(self.pqclass,
                             settings=None,
                             crawler=self.crawler,
                             downstream_queue_cls=self.dqclass,
-                            key=self.dqdir,
+                            key='requests.queue',
                             startprios=state)
         if q:
             logger.info("Resuming crawl (%(queuesize)d requests scheduled)",
                         {'queuesize': len(q)}, extra={'spider': self.spider})
         return q
 
-    def _dqdir(self, jobdir):
-        """ Return a folder name to keep disk queue state at """
-        if jobdir:
-            dqdir = join(jobdir, 'requests.queue')
-            if not exists(dqdir):
-                os.makedirs(dqdir)
-            return dqdir
-
-    def _read_dqs_state(self, dqdir):
-        path = join(dqdir, 'active.json')
-        if not exists(path):
+    def _read_dqs_state(self):
+        state = self.persister.get(self._persist_key)
+        if not state:
             return ()
-        with open(path) as f:
-            return json.load(f)
+        return json.loads(state.decode("utf8"))
 
-    def _write_dqs_state(self, dqdir, state):
-        with open(join(dqdir, 'active.json'), 'w') as f:
-            json.dump(state, f)
+    def _write_dqs_state(self, state):
+        self.persister.set(self._persist_key, json.dumps(state).encode("utf8"))

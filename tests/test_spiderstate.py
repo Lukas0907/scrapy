@@ -7,6 +7,7 @@ from scrapy.extensions.spiderstate import SpiderState
 from scrapy.spiders import Spider
 from scrapy.exceptions import NotConfigured
 from scrapy.utils.test import get_crawler
+from scrapy.utils.job import DiskPersister
 
 
 class SpiderStateTest(unittest.TestCase):
@@ -18,14 +19,14 @@ class SpiderStateTest(unittest.TestCase):
             spider = Spider(name='default')
             dt = datetime.now()
 
-            ss = SpiderState(jobdir)
+            ss = SpiderState(persister=DiskPersister(jobdir))
             ss.spider_opened(spider)
             spider.state['one'] = 1
             spider.state['dt'] = dt
             ss.spider_closed(spider)
 
             spider2 = Spider(name='default')
-            ss2 = SpiderState(jobdir)
+            ss2 = SpiderState(persister=DiskPersister(jobdir))
             ss2.spider_opened(spider2)
             self.assertEqual(spider.state, {'one': 1, 'dt': dt})
             ss2.spider_closed(spider2)
